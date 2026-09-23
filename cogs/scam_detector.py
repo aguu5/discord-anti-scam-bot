@@ -153,11 +153,14 @@ class ScamDetector(commands.Cog):
         action_threshold = guild_cfg.get("action_threshold", 6)
         if score < action_threshold:
             await self._send_alert(message, score, reasons, evidence_image_url, guild_cfg)
+            await self.db.increment_stat(message.guild.id, "alerts_raised")
             return  # stays as an alert only, for manual review
 
         quarantine_role_id = guild_cfg.get("quarantine_role_id")
         view = UndoActionView(message.author.id, quarantine_role_id)
         await self._send_alert(message, score, reasons, evidence_image_url, guild_cfg, view)
+        await self.db.increment_stat(message.guild.id, "alerts_raised")
+        await self.db.increment_stat(message.guild.id, "actions_taken")
 
         try:
             await message.delete()
@@ -198,6 +201,8 @@ class ScamDetector(commands.Cog):
         guild_cfg = await self.db.get_guild_config(message.guild.id)
         if isinstance(message.author, discord.Member) and self._is_exempt(message.author, guild_cfg):
             return  # trusted role: skip detection entirely
+
+        await self.db.increment_stat(message.guild.id, "messages_scored")
 
         text_score, text_reasons = score_text(message.content)
         link_score, link_reasons = score_links(message.content)
@@ -245,34 +250,32 @@ class ScamDetector(commands.Cog):
 
     # ---------- moderator commands ----------
 
-    @commands.command(name="addhash")
-    @commands.has_permissions(manage_messages=True)
-    async def add_hash(self, ctx: commands.Context, label: str = "confirmed_scam"):
-        """
-        Reply to a message with an image (or send this command with an image
-        attached) to add that image to the known scam-hashes database.
-        Usage: !addhash mrbeast_casino_v3
-        """
-        target = None
-        if ctx.message.reference:
-            target = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-        elif ctx.message.attachments:
-            target = ctx.message
-
-        if not target or not target.attachments:
-            await ctx.reply("Reply to a message with an image, or attach an image along with the command.")
+    @discord.app_commands.command(name="addhash", description="Add an image to the known scam-hashes database.")
+    @discord.app_commands.describe(
+        image="The image to add to the database",
+        label="The label for the known scam hash (default: confirmed_scam)"
+    )
+    @discord.app_commands.default_permissions(manage_messages=True)
+    async def add_hash(self, interaction: discord.Interaction, image: discord.Attachment, label: str = "confirmed_scam"):
+        if not image.content_type or not image.content_type.startswith("image/"):
+            await interaction.response.send_message("The attached file must be an image.", ephemeral=True)
             return
+            
+        await interaction.response.defer(ephemeral=True)
 
-        added_urls = []
-        for att in target.attachments:
-            if att.content_type and att.content_type.startswith("image/"):
-                if await add_known_hash(att.url, label):
-                    added_urls.append(att.url)
-
-        await ctx.reply(f"✅ Added {len(added_urls)} image(s) to the database with label `{label}`.")
-
-        if added_urls:
-            await self._log_hash_addition(ctx, label, added_urls)
+        added = await add_known_hash(image.url, label)
+        if added:
+            await interaction.followup.send(f"✅ Added image to the database with label `{label}`.")
+            
+            # Create a mock ctx-like object for _log_hash_addition or adapt it
+            class MockCtx:
+                def __init__(self, interaction):
+                    self.guild = interaction.guild
+                    self.author = interaction.user
+            
+            await self._log_hash_addition(MockCtx(interaction), label, [image.url])
+        else:
+            await interaction.followup.send("Failed to add image or it is already known.")
 
     async def _log_hash_addition(self, ctx: commands.Context, label: str, image_urls: List[str]):
         """
@@ -297,7 +300,7 @@ class ScamDetector(commands.Cog):
         await channel.send(embed=embed)
 
     config_group = discord.app_commands.Group(
-        name="config", 
+        name="scamconfig", 
         description="Configure anti-scam settings for this server",
         default_permissions=discord.Permissions(manage_guild=True)
     )
@@ -405,6 +408,75 @@ class ScamDetector(commands.Cog):
             await interaction.response.send_message(f"Removed {role.mention} from exempt roles.", ephemeral=True)
         else:
             await interaction.response.send_message(f"{role.mention} is not exempt.", ephemeral=True)
+
+    @discord.app_commands.command(name="stats", description="Show scam detection statistics for this server.")
+    @discord.app_commands.default_permissions(manage_guild=True)
+    async def show_stats(self, interaction: discord.Interaction):
+        stats = await self.db.get_guild_stats(interaction.guild_id)
+        embed = discord.Embed(title="Scam Detection Stats", color=discord.Color.blurple())
+        embed.add_field(name="Messages Scored", value=str(stats.get("messages_scored", 0)))
+        embed.add_field(name="Alerts Raised", value=str(stats.get("alerts_raised", 0)))
+        embed.add_field(name="Actions Taken", value=str(stats.get("actions_taken", 0)))
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.app_commands.command(name="scan", description="Retroactively score the last N messages in the channel.")
+    @discord.app_commands.describe(limit="Number of messages to scan (default 100, max 500)")
+    @discord.app_commands.default_permissions(manage_messages=True)
+    async def scan_channel(self, interaction: discord.Interaction, limit: int = 100):
+        if limit < 1:
+            limit = 100
+        if limit > 500:
+            limit = 500
+
+        await interaction.response.defer(ephemeral=True)
+        
+        guild_cfg = await self.db.get_guild_config(interaction.guild_id)
+        scanned = 0
+        flagged = 0
+
+        async for msg in interaction.channel.history(limit=limit):
+            if msg.author.bot or not msg.guild:
+                continue
+            if isinstance(msg.author, discord.Member) and self._is_exempt(msg.author, guild_cfg):
+                continue
+                
+            await self.db.increment_stat(interaction.guild_id, "messages_scored")
+            scanned += 1
+
+            text_score, text_reasons = score_text(msg.content)
+            link_score, link_reasons = score_links(msg.content)
+
+            image_urls = [
+                a.url for a in msg.attachments
+                if a.content_type and a.content_type.startswith("image/")
+            ]
+            max_bytes = int(guild_cfg.get("max_image_size_mb", 8) * 1024 * 1024)
+            hash_score, hash_reasons, matched_image_urls, unmatched_images = await score_attachment_urls(
+                image_urls,
+                hamming_threshold=guild_cfg.get("hamming_threshold", 8),
+                max_bytes=max_bytes,
+            )
+
+            ocr_score = 0
+            ocr_reasons = []
+            for url, raw_bytes in unmatched_images:
+                extracted = await extract_text(raw_bytes)
+                if extracted:
+                    t_score, t_reasons = score_text(extracted)
+                    ocr_score += t_score
+                    for r in t_reasons:
+                        ocr_reasons.append(r.replace("text: ", "image (OCR): ", 1))
+
+            total_score = text_score + link_score + hash_score + ocr_score
+            all_reasons = text_reasons + link_reasons + hash_reasons + ocr_reasons
+
+            alert_threshold = guild_cfg.get("alert_threshold", 3)
+            if total_score >= alert_threshold:
+                evidence_url = matched_image_urls[0] if matched_image_urls else None
+                await self._act_on_message(msg, total_score, all_reasons, evidence_url, guild_cfg)
+                flagged += 1
+
+        await interaction.followup.send(f"Scan complete. Scanned {scanned} messages, flagged {flagged}.")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ScamDetector(bot))

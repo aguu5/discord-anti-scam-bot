@@ -40,6 +40,16 @@ class ScamDb:
             )
             """
         )
+        await self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS guild_stats (
+                guild_id INTEGER PRIMARY KEY,
+                messages_scored INTEGER DEFAULT 0,
+                alerts_raised INTEGER DEFAULT 0,
+                actions_taken INTEGER DEFAULT 0
+            )
+            """
+        )
         await self._conn.commit()
 
     async def close(self):
@@ -112,3 +122,32 @@ class ScamDb:
         ) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else 0
+
+    async def increment_stat(self, guild_id: int, stat: str):
+        valid_stats = {"messages_scored", "alerts_raised", "actions_taken"}
+        if stat not in valid_stats:
+            return
+        await self._conn.execute(
+            "INSERT OR IGNORE INTO guild_stats (guild_id) VALUES (?)",
+            (guild_id,)
+        )
+        await self._conn.execute(
+            f"UPDATE guild_stats SET {stat} = {stat} + 1 WHERE guild_id = ?",
+            (guild_id,)
+        )
+        await self._conn.commit()
+
+    async def get_guild_stats(self, guild_id: int) -> dict:
+        async with self._conn.execute(
+            "SELECT messages_scored, alerts_raised, actions_taken FROM guild_stats WHERE guild_id = ?",
+            (guild_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "messages_scored": row[0],
+                    "alerts_raised": row[1],
+                    "actions_taken": row[2]
+                }
+            return {"messages_scored": 0, "alerts_raised": 0, "actions_taken": 0}
+

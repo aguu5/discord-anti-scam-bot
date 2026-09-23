@@ -17,6 +17,41 @@ from utils.patterns import score_text
 log = logging.getLogger("anti_scam_bot.scam_detector")
 
 
+class UndoActionView(discord.ui.View):
+    def __init__(self, target_id: int, quarantine_role_id: Optional[int]):
+        super().__init__(timeout=None)
+        self.target_id = target_id
+        self.quarantine_role_id = quarantine_role_id
+
+    @discord.ui.button(label="Undo Action", style=discord.ButtonStyle.green)
+    async def undo_action(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_messages:
+            await interaction.response.send_message("You don't have permission to use this button.", ephemeral=True)
+            return
+
+        member = interaction.guild.get_member(self.target_id)
+        if not member:
+            await interaction.response.send_message("User is no longer in the server.", ephemeral=True)
+            return
+
+        try:
+            if self.quarantine_role_id:
+                role = interaction.guild.get_role(self.quarantine_role_id)
+                if role and role in member.roles:
+                    await member.remove_roles(role, reason=f"Action undone by {interaction.user}")
+            else:
+                if member.is_timed_out():
+                    await member.timeout(None, reason=f"Action undone by {interaction.user}")
+            
+            button.disabled = True
+            button.label = f"Undone by {interaction.user.display_name}"
+            await interaction.response.edit_message(view=self)
+        except discord.Forbidden:
+            await interaction.response.send_message("I lack permissions to undo the sanction.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"Error undoing action: {e}", ephemeral=True)
+
+
 class ScamDetector(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -78,6 +113,7 @@ class ScamDetector(commands.Cog):
         score: int,
         reasons: List[str],
         evidence_image_url: Optional[str],
+        view: Optional[discord.ui.View] = discord.utils.MISSING,
     ):
         channel = await self._get_mod_log_channel(message.guild)
         if channel is None:
@@ -103,7 +139,7 @@ class ScamDetector(commands.Cog):
 
         embed.set_footer(text=f"Message ID: {message.id}")
 
-        await channel.send(embed=embed)
+        await channel.send(embed=embed, view=view)
 
     async def _act_on_message(
         self,
@@ -112,18 +148,34 @@ class ScamDetector(commands.Cog):
         reasons: List[str],
         evidence_image_url: Optional[str],
     ):
-        await self._send_alert(message, score, reasons, evidence_image_url)
-
         action_threshold = self.cfg.get("action_threshold", 6)
         if score < action_threshold:
+            await self._send_alert(message, score, reasons, evidence_image_url)
             return  # stays as an alert only, for manual review
+
+        quarantine_role_id = self.cfg.get("quarantine_role_id")
+        view = UndoActionView(message.author.id, quarantine_role_id)
+        await self._send_alert(message, score, reasons, evidence_image_url, view)
 
         try:
             await message.delete()
         except discord.HTTPException:
             log.warning("Couldn't delete message %s", message.id)
 
-        quarantine_role_id = self.cfg.get("quarantine_role_id")
+        # Send DM before sanctioning
+        dm_on_action = self.cfg.get("dm_on_action", True)
+        if dm_on_action:
+            dm_msg = self.cfg.get(
+                "dm_message", 
+                "Your account was flagged for suspicious activity and has been temporarily restricted. Please check your authorized apps, change your password, and enable 2FA."
+            )
+            try:
+                await message.author.send(dm_msg)
+            except discord.Forbidden:
+                log.warning("Forbidden: Could not DM user %s before sanctioning", message.author.id)
+            except discord.HTTPException as e:
+                log.warning("HTTPException trying to DM user %s: %s", message.author.id, e)
+
         try:
             if quarantine_role_id:
                 role = message.guild.get_role(quarantine_role_id)

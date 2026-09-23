@@ -1,0 +1,5 @@
+# One domain per line. Lines starting with # are ignored.
+# Add here the scam domains you confirm in your server.
+#
+# Example format (not a real domain):
+# example-crypto-casino.com

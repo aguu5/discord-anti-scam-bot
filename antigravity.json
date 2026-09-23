@@ -1,0 +1,64 @@
+{
+  "agent": {
+    "build": {
+      "mode": "primary",
+      "description": "Orchestrator: plans, decides, and delegates. Never executes the heavy work directly — its edit and command permissions are deliberately restricted to force delegation to the minions.",
+      "model": "antigravity/claude-4.6-opus-thinking",
+      "prompt": "{file:./prompts/orchestrator.txt}",
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "*": "ask",
+          "git status": "allow",
+          "git log*": "allow",
+          "git diff*": "allow"
+        },
+        "grep": "ask",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "task": {
+          "*": "deny",
+          "implementer": "allow",
+          "researcher": "allow"
+        }
+      }
+    },
+
+    "implementer": {
+      "description": "Executes a concrete, scoped implementation task handed off by the orchestrator (writing/editing code, generating a file, applying a specific change). Does not decide scope or architecture: only executes the received specification and returns the final artifact in a fixed format.",
+      "mode": "subagent",
+      "model": "antigravity/claude-4.6-sonnet-thinking",
+      "temperature": 0.1,
+      "steps": 20,
+      "prompt": "{file:./prompts/implementer.txt}",
+      "permission": {
+        "edit": "allow",
+        "bash": {
+          "*": "ask",
+          "git status": "allow",
+          "git diff*": "allow"
+        },
+        "webfetch": "deny",
+        "websearch": "deny"
+      }
+    },
+
+    "researcher": {
+      "description": "Explores the code or documentation (and the web, if needed) to answer a specific question from the orchestrator and returns a brief, cited summary. Read-only: never modifies files.",
+      "mode": "subagent",
+      "model": "antigravity/gemini-3.8-flash",
+      "model_options": {
+        "effort": "low"
+      },
+      "temperature": 0,
+      "steps": 15,
+      "prompt": "{file:./prompts/researcher.txt}",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    }
+  }
+}

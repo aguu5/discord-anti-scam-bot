@@ -1,0 +1,52 @@
+# Copy this file to config.yaml and fill in your values:
+#   cp config.example.yaml config.yaml
+#
+# Never commit config.yaml to a public repository: it contains the bot token.
+
+token: "YOUR_TOKEN_HERE"
+
+prefix: "!"
+
+# ID of the channel where the bot will post alerts with evidence.
+# (Enable "Developer Mode" in Discord -> right-click the channel -> Copy ID)
+mod_log_channel_id: 123456789012345678
+
+# ID of an optional "quarantine" role (no permission to send messages).
+# If left as null, the bot uses Discord's native timeout instead.
+quarantine_role_id: null
+
+# --- Detection thresholds ---
+
+# Score above which the bot acts automatically (deletes the message + sanctions the user).
+action_threshold: 6
+
+# Score above which the bot only alerts moderators, without acting (for manual review).
+alert_threshold: 3
+
+# Maximum Hamming distance to consider two images "the same" (perceptual hash).
+# Lower = stricter (fewer false positives, but may miss lightly edited variants).
+hamming_threshold: 8
+
+# Account created less than N days ago = extra points.
+new_account_days_threshold: 7
+
+# Burst: N messages with a link within M seconds = extra points.
+burst_message_count: 4
+burst_window_seconds: 15
+
+# Minutes of automatic timeout when action_threshold is exceeded
+# (ignored if quarantine_role_id is set).
+auto_timeout_minutes: 15
+
+# --- Abuse mitigations ---
+
+# Role IDs that are exempt from detection entirely (e.g. a @Moderator role).
+# Members with any of these roles are skipped completely: no scoring, no
+# alert, no action. This stops the bot from punishing a mod who quotes scam
+# text to warn others, or a staff member relaying an example for documentation.
+exempt_role_ids: []
+
+# Images larger than this are skipped entirely (never downloaded/processed),
+# so a flood of oversized attachments can't be used to waste the bot's
+# bandwidth or CPU.
+max_image_size_mb: 8

@@ -50,6 +50,15 @@ class ScamDb:
             )
             """
         )
+        await self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS whois_cache (
+                domain TEXT PRIMARY KEY,
+                creation_date REAL,
+                lookup_time REAL
+            )
+            """
+        )
         await self._conn.commit()
 
     async def close(self):
@@ -151,3 +160,19 @@ class ScamDb:
                 }
             return {"messages_scored": 0, "alerts_raised": 0, "actions_taken": 0}
 
+    async def get_whois_cache(self, domain: str):
+        async with self._conn.execute(
+            "SELECT creation_date FROM whois_cache WHERE domain = ?",
+            (domain,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0]
+            return None
+
+    async def set_whois_cache(self, domain: str, creation_date: float | None):
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO whois_cache (domain, creation_date, lookup_time) VALUES (?, ?, ?)",
+            (domain, creation_date, time.time())
+        )
+        await self._conn.commit()

@@ -205,7 +205,12 @@ class ScamDetector(commands.Cog):
         await self.db.increment_stat(message.guild.id, "messages_scored")
 
         text_score, text_reasons = score_text(message.content)
-        link_score, link_reasons = score_links(message.content)
+        suspicious_domain_age_days = self.cfg.get("suspicious_domain_age_days", 30)
+        link_score, link_reasons = await score_links(
+            message.content, 
+            db=self.db, 
+            suspicious_domain_age_days=suspicious_domain_age_days
+        )
 
         image_urls = [
             a.url for a in message.attachments
@@ -444,7 +449,12 @@ class ScamDetector(commands.Cog):
             scanned += 1
 
             text_score, text_reasons = score_text(msg.content)
-            link_score, link_reasons = score_links(msg.content)
+            suspicious_domain_age_days = self.cfg.get("suspicious_domain_age_days", 30)
+            link_score, link_reasons = await score_links(
+                msg.content, 
+                db=self.db, 
+                suspicious_domain_age_days=suspicious_domain_age_days
+            )
 
             image_urls = [
                 a.url for a in msg.attachments

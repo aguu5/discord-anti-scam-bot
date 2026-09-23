@@ -22,7 +22,7 @@ async def test_score_attachment_urls_no_match(mock_download_bytes, tmp_path):
     db_path = tmp_path / "known_hashes.json"
     db_path.write_text('{"ffffff0000000000": "fake_scam"}')
     
-    score, details, matched = await score_attachment_urls(
+    score, details, matched, unmatched = await score_attachment_urls(
         ["https://example.com/img.jpg"],
         db_path=str(db_path)
     )
@@ -42,7 +42,7 @@ async def test_score_attachment_urls_match(mock_download_bytes, tmp_path):
     import json
     db_path.write_text(json.dumps({real_hash: "test_scam"}))
     
-    score, details, matched = await score_attachment_urls(
+    score, details, matched, unmatched = await score_attachment_urls(
         ["https://example.com/img.jpg"],
         db_path=str(db_path)
     )

@@ -1,6 +1,7 @@
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 from cogs.scam_detector import ScamDetector
+from datetime import datetime, timezone, timedelta
 
 class DummyBot:
     def __init__(self):
@@ -8,45 +9,55 @@ class DummyBot:
 
 @pytest.fixture
 def cog():
-    return ScamDetector(DummyBot())
+    cog_instance = ScamDetector(DummyBot())
+    cog_instance.db = AsyncMock()
+    return cog_instance
 
 def test_is_exempt(cog):
-    cog.cfg = {"exempt_role_ids": [123]}
+    guild_cfg = {"exempt_role_ids": [123]}
     
     mock_member = MagicMock()
     mock_role = MagicMock()
     mock_role.id = 123
     mock_member.roles = [mock_role]
     
-    assert cog._is_exempt(mock_member) is True
+    assert cog._is_exempt(mock_member, guild_cfg) is True
     
     mock_role2 = MagicMock()
     mock_role2.id = 456
     mock_member.roles = [mock_role2]
-    assert cog._is_exempt(mock_member) is False
+    assert cog._is_exempt(mock_member, guild_cfg) is False
 
-def test_register_burst(cog):
-    # Test bursting
-    cog.cfg = {"burst_window_seconds": 10, "burst_limit": 3}
+@pytest.mark.asyncio
+async def test_register_burst(cog):
+    guild_cfg = {"burst_window_seconds": 10, "burst_message_count": 3}
+    guild_id = 111
     user_id = 999
-    assert cog._register_burst(user_id, has_link=True) == 0
-    assert cog._register_burst(user_id, has_link=True) == 0
-    assert cog._register_burst(user_id, has_link=True) == 4 # Hits limit
+    
+    # Simulate DB returning count < limit
+    cog.db.register_burst_and_count.return_value = 1
+    assert await cog._register_burst(guild_id, user_id, has_link=True, guild_cfg=guild_cfg) == 0
+    
+    # Simulate DB returning count >= limit
+    cog.db.register_burst_and_count.return_value = 4
+    assert await cog._register_burst(guild_id, user_id, has_link=True, guild_cfg=guild_cfg) == 4
 
-def test_register_burst_no_link(cog):
-    cog.cfg = {"burst_window_seconds": 10, "burst_limit": 3}
+@pytest.mark.asyncio
+async def test_register_burst_no_link(cog):
+    guild_cfg = {"burst_window_seconds": 10, "burst_message_count": 3}
+    guild_id = 111
     user_id = 888
-    assert cog._register_burst(user_id, has_link=False) == 0
-    assert cog._register_burst(user_id, has_link=False) == 0
-    assert cog._register_burst(user_id, has_link=False) == 0
+    
+    # When has_link is False, it returns 0 immediately without hitting DB
+    assert await cog._register_burst(guild_id, user_id, has_link=False, guild_cfg=guild_cfg) == 0
+    cog.db.register_burst_and_count.assert_not_called()
 
 def test_is_new_account(cog):
-    cog.cfg = {"new_account_days": 7}
+    guild_cfg = {"new_account_days_threshold": 7}
     mock_member = MagicMock()
     
-    from datetime import datetime, timezone, timedelta
     mock_member.created_at = datetime.now(timezone.utc) - timedelta(days=2)
-    assert cog._is_new_account(mock_member) is True
+    assert cog._is_new_account(mock_member, guild_cfg) is True
     
     mock_member.created_at = datetime.now(timezone.utc) - timedelta(days=10)
-    assert cog._is_new_account(mock_member) is False
+    assert cog._is_new_account(mock_member, guild_cfg) is False

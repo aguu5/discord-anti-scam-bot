@@ -11,6 +11,7 @@ from discord.ext import commands
 
 from utils.image_hash import add_known_hash, score_attachment_urls
 from utils.link_checker import extract_urls, score_links
+from utils.ocr import extract_text
 from utils.patterns import score_text
 
 log = logging.getLogger("anti_scam_bot.scam_detector")
@@ -152,11 +153,21 @@ class ScamDetector(commands.Cog):
             if a.content_type and a.content_type.startswith("image/")
         ]
         max_bytes = int(self.cfg.get("max_image_size_mb", 8) * 1024 * 1024)
-        hash_score, hash_reasons, matched_image_urls = await score_attachment_urls(
+        hash_score, hash_reasons, matched_image_urls, unmatched_images = await score_attachment_urls(
             image_urls,
             hamming_threshold=self.cfg.get("hamming_threshold", 8),
             max_bytes=max_bytes,
         )
+
+        ocr_score = 0
+        ocr_reasons = []
+        for url, raw_bytes in unmatched_images:
+            extracted = await extract_text(raw_bytes)
+            if extracted:
+                t_score, t_reasons = score_text(extracted)
+                ocr_score += t_score
+                for r in t_reasons:
+                    ocr_reasons.append(r.replace("text: ", "image (OCR): ", 1))
 
         has_link = bool(extract_urls(message.content))
         burst_score = await self._register_burst(message.guild.id, message.author.id, has_link)
@@ -170,8 +181,8 @@ class ScamDetector(commands.Cog):
             behavior_score += 2
             behavior_reasons.append("behavior: recently created account")
 
-        total_score = text_score + link_score + hash_score + behavior_score
-        all_reasons = text_reasons + link_reasons + hash_reasons + behavior_reasons
+        total_score = text_score + link_score + hash_score + ocr_score + behavior_score
+        all_reasons = text_reasons + link_reasons + hash_reasons + ocr_reasons + behavior_reasons
 
         alert_threshold = self.cfg.get("alert_threshold", 3)
         if total_score >= alert_threshold:

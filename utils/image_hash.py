@@ -79,26 +79,27 @@ async def score_attachment_urls(
     db_path: str = "data/known_hashes.json",
     hamming_threshold: int = 8,
     max_bytes: Optional[int] = None,
-) -> Tuple[int, List[str], List[str]]:
+) -> Tuple[int, List[str], List[str], List[Tuple[str, bytes]]]:
     """
     Compare each image against the known-hashes database.
 
-    Returns (score, details, matched_urls). matched_urls contains only the
+    Returns (score, details, matched_urls, unmatched_images). matched_urls contains only the
     URLs of images that actually matched a known scam hash -- this is used
     upstream to decide which image (if any) gets shown as evidence, so an
     unrelated attachment on the same message never ends up displayed in the
-    mod-log alert.
+    mod-log alert. unmatched_images contains (url, bytes) for those that didn't match.
     """
     if not urls:
-        return 0, [], []
+        return 0, [], [], []
 
     db = _load_db(db_path)
     if not db:
-        return 0, [], []
+        pass # We still need to download and return them as unmatched
 
     total = 0
     details = []
     matched_urls = []
+    unmatched_images = []
 
     for url in urls:
         raw = await download_bytes(url, max_bytes=max_bytes)
@@ -106,21 +107,26 @@ async def score_attachment_urls(
             continue
         h = compute_phash(raw)
         if h is None:
+            unmatched_images.append((url, raw))
             continue
 
         this_hash = imagehash.hex_to_hash(h)
         best_label, best_distance = None, None
-        for known_hex, label in db.items():
-            distance = this_hash - imagehash.hex_to_hash(known_hex)
-            if best_distance is None or distance < best_distance:
-                best_distance, best_label = distance, label
+        
+        if db:
+            for known_hex, label in db.items():
+                distance = this_hash - imagehash.hex_to_hash(known_hex)
+                if best_distance is None or distance < best_distance:
+                    best_distance, best_label = distance, label
 
         if best_distance is not None and best_distance <= hamming_threshold:
             total += 10
             details.append(f"image: matches '{best_label}' (distance {best_distance})")
             matched_urls.append(url)
+        else:
+            unmatched_images.append((url, raw))
 
-    return total, details, matched_urls
+    return total, details, matched_urls, unmatched_images
 
 
 async def add_known_hash(url: str, label: str, db_path: str = "data/known_hashes.json") -> bool:

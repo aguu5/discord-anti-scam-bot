@@ -78,6 +78,22 @@ Edit `config.yaml`:
 python bot.py
 ```
 
+### Running with Docker
+
+Alternatively, you can run the bot using Docker. Make sure to mount your `config.yaml` and the `data/` directory as volumes so your configuration, image hashes, and bot state persist across container restarts.
+
+```bash
+# Build the image
+docker build -t discord-anti-scam-bot .
+
+# Run the container
+docker run -d \
+  --name anti-scam-bot \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  -v $(pwd)/data:/app/data \
+  discord-anti-scam-bot
+```
+
 ## How to feed the known-images database
 
 When a new scam screenshot shows up in your server:

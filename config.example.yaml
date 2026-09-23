@@ -7,6 +7,9 @@ token: "YOUR_TOKEN_HERE"
 
 prefix: "!"
 
+# Path to the SQLite database for runtime state.
+db_path: "data/bot_state.db"
+
 # ID of the channel where the bot will post alerts with evidence.
 # (Enable "Developer Mode" in Discord -> right-click the channel -> Copy ID)
 mod_log_channel_id: 123456789012345678

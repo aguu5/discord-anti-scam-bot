@@ -124,8 +124,7 @@ a tool for griefing or wasted resources:
 - Integrate the [Google Safe Browsing API](https://developers.google.com/safe-browsing)
   (or similar) to check links against an external database, in addition to
   your local blocklist.
-- Persist the burst history in a database instead of memory, so it survives
-  a bot restart.
+- **Migration Note**: The bot now persists burst-detection history using SQLite. The SQLite file's path is configurable via the `db_path` config key, which defaults to `data/bot_state.db`. This file is runtime state and should be gitignored.
 - Share `known_hashes.json` across multiple servers via a central service
   (your own API or a community repo).
 - Raid detection (many new accounts joining at once) — Discord's native

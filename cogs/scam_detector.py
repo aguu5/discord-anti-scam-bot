@@ -3,8 +3,6 @@ Main cog: listens to messages, computes a risk score combining
 text + links + images + behavior, and acts based on the configured thresholds.
 """
 import logging
-import time
-from collections import defaultdict, deque
 from datetime import timedelta
 from typing import List, Optional
 
@@ -22,8 +20,17 @@ class ScamDetector(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.cfg = bot.config
-        # per-user timestamp history of link-containing messages, to detect bursts
-        self._link_history: dict[int, deque] = defaultdict(deque)
+        self.db = None
+
+    async def cog_load(self):
+        from utils.db import ScamDb
+        db_path = self.cfg.get("db_path", "data/bot_state.db")
+        self.db = ScamDb(db_path)
+        await self.db.connect()
+
+    async def cog_unload(self):
+        if self.db:
+            await self.db.close()
 
     # ---------- helpers ----------
 
@@ -46,21 +53,17 @@ class ScamDetector(commands.Cog):
         member_role_ids = {role.id for role in member.roles}
         return bool(exempt_ids & member_role_ids)
 
-    def _register_burst(self, user_id: int, has_link: bool) -> int:
+    async def _register_burst(self, guild_id: int, user_id: int, has_link: bool) -> int:
         """Return extra points if the user is sending links in a burst."""
         if not has_link:
             return 0
 
         window = self.cfg.get("burst_window_seconds", 15)
         limit = self.cfg.get("burst_message_count", 4)
-        now = time.monotonic()
+        
+        count = await self.db.register_burst_and_count(guild_id, user_id, window)
 
-        dq = self._link_history[user_id]
-        dq.append(now)
-        while dq and now - dq[0] > window:
-            dq.popleft()
-
-        return 4 if len(dq) >= limit else 0
+        return 4 if count >= limit else 0
 
     async def _get_mod_log_channel(self, guild: discord.Guild):
         channel_id = self.cfg.get("mod_log_channel_id")
@@ -156,7 +159,7 @@ class ScamDetector(commands.Cog):
         )
 
         has_link = bool(extract_urls(message.content))
-        burst_score = self._register_burst(message.author.id, has_link)
+        burst_score = await self._register_burst(message.guild.id, message.author.id, has_link)
 
         behavior_reasons = []
         if burst_score:

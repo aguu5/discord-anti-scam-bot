@@ -2,3 +2,5 @@ data/bot_state.db
 config.yaml
 __pycache__/
 *.pyc
+antigravity.json
+prompts/

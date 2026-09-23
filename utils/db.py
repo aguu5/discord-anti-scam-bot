@@ -21,11 +21,68 @@ class ScamDb:
             """
         )
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_burst_history ON burst_history(guild_id, user_id)")
+        
+        await self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS guild_settings (
+                guild_id INTEGER PRIMARY KEY,
+                action_threshold INTEGER DEFAULT 6,
+                alert_threshold INTEGER DEFAULT 3,
+                hamming_threshold INTEGER DEFAULT 8,
+                mod_log_channel_id INTEGER,
+                exempt_role_ids TEXT,
+                max_image_size_mb INTEGER DEFAULT 8,
+                new_account_days_threshold INTEGER DEFAULT 7,
+                burst_message_count INTEGER DEFAULT 4,
+                burst_window_seconds INTEGER DEFAULT 15,
+                auto_timeout_minutes INTEGER DEFAULT 15,
+                quarantine_role_id INTEGER
+            )
+            """
+        )
         await self._conn.commit()
 
     async def close(self):
         if self._conn:
             await self._conn.close()
+
+    async def get_guild_config(self, guild_id: int) -> dict:
+        async with self._conn.execute(
+            "SELECT action_threshold, alert_threshold, hamming_threshold, mod_log_channel_id, exempt_role_ids, max_image_size_mb, new_account_days_threshold, burst_message_count, burst_window_seconds, auto_timeout_minutes, quarantine_role_id FROM guild_settings WHERE guild_id = ?",
+            (guild_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "action_threshold": row[0],
+                    "alert_threshold": row[1],
+                    "hamming_threshold": row[2],
+                    "mod_log_channel_id": row[3],
+                    "exempt_role_ids": [int(x) for x in row[4].split(",")] if row[4] else [],
+                    "max_image_size_mb": row[5],
+                    "new_account_days_threshold": row[6],
+                    "burst_message_count": row[7],
+                    "burst_window_seconds": row[8],
+                    "auto_timeout_minutes": row[9],
+                    "quarantine_role_id": row[10],
+                }
+            
+            # Default fallback
+            await self._conn.execute(
+                "INSERT INTO guild_settings (guild_id) VALUES (?)",
+                (guild_id,)
+            )
+            await self._conn.commit()
+            return await self.get_guild_config(guild_id)
+
+    async def update_guild_config(self, guild_id: int, key: str, value):
+        if key == "exempt_role_ids" and isinstance(value, list):
+            value = ",".join(str(x) for x in value)
+        await self._conn.execute(
+            f"UPDATE guild_settings SET {key} = ? WHERE guild_id = ?",
+            (value, guild_id)
+        )
+        await self._conn.commit()
 
     async def register_burst_and_count(self, guild_id: int, user_id: int, window_seconds: int) -> int:
         """

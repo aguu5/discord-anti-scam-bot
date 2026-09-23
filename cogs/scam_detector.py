@@ -70,12 +70,12 @@ class ScamDetector(commands.Cog):
 
     # ---------- helpers ----------
 
-    def _is_new_account(self, member: discord.Member) -> bool:
-        days_threshold = self.cfg.get("new_account_days_threshold", 7)
+    def _is_new_account(self, member: discord.Member, guild_cfg: dict) -> bool:
+        days_threshold = guild_cfg.get("new_account_days_threshold", 7)
         age_days = (discord.utils.utcnow() - member.created_at).days
         return age_days < days_threshold
 
-    def _is_exempt(self, member: discord.Member) -> bool:
+    def _is_exempt(self, member: discord.Member, guild_cfg: dict) -> bool:
         """
         Members with any of the roles listed in exempt_role_ids are skipped
         entirely: no scoring, no alert, no action. This exists so trusted
@@ -83,26 +83,26 @@ class ScamDetector(commands.Cog):
         warnings, documentation, etc. -- without the bot mistaking them for
         the scammer and sanctioning them.
         """
-        exempt_ids = set(self.cfg.get("exempt_role_ids") or [])
+        exempt_ids = set(guild_cfg.get("exempt_role_ids") or [])
         if not exempt_ids:
             return False
         member_role_ids = {role.id for role in member.roles}
         return bool(exempt_ids & member_role_ids)
 
-    async def _register_burst(self, guild_id: int, user_id: int, has_link: bool) -> int:
+    async def _register_burst(self, guild_id: int, user_id: int, has_link: bool, guild_cfg: dict) -> int:
         """Return extra points if the user is sending links in a burst."""
         if not has_link:
             return 0
 
-        window = self.cfg.get("burst_window_seconds", 15)
-        limit = self.cfg.get("burst_message_count", 4)
+        window = guild_cfg.get("burst_window_seconds", 15)
+        limit = guild_cfg.get("burst_message_count", 4)
         
         count = await self.db.register_burst_and_count(guild_id, user_id, window)
 
         return 4 if count >= limit else 0
 
-    async def _get_mod_log_channel(self, guild: discord.Guild):
-        channel_id = self.cfg.get("mod_log_channel_id")
+    async def _get_mod_log_channel(self, guild: discord.Guild, guild_cfg: dict):
+        channel_id = guild_cfg.get("mod_log_channel_id")
         if not channel_id:
             return None
         return guild.get_channel(channel_id)
@@ -113,9 +113,10 @@ class ScamDetector(commands.Cog):
         score: int,
         reasons: List[str],
         evidence_image_url: Optional[str],
+        guild_cfg: dict,
         view: Optional[discord.ui.View] = discord.utils.MISSING,
     ):
-        channel = await self._get_mod_log_channel(message.guild)
+        channel = await self._get_mod_log_channel(message.guild, guild_cfg)
         if channel is None:
             log.warning("mod_log_channel_id not configured or invalid; can't send alert")
             return
@@ -147,15 +148,16 @@ class ScamDetector(commands.Cog):
         score: int,
         reasons: List[str],
         evidence_image_url: Optional[str],
+        guild_cfg: dict,
     ):
-        action_threshold = self.cfg.get("action_threshold", 6)
+        action_threshold = guild_cfg.get("action_threshold", 6)
         if score < action_threshold:
-            await self._send_alert(message, score, reasons, evidence_image_url)
+            await self._send_alert(message, score, reasons, evidence_image_url, guild_cfg)
             return  # stays as an alert only, for manual review
 
-        quarantine_role_id = self.cfg.get("quarantine_role_id")
+        quarantine_role_id = guild_cfg.get("quarantine_role_id")
         view = UndoActionView(message.author.id, quarantine_role_id)
-        await self._send_alert(message, score, reasons, evidence_image_url, view)
+        await self._send_alert(message, score, reasons, evidence_image_url, guild_cfg, view)
 
         try:
             await message.delete()
@@ -182,7 +184,7 @@ class ScamDetector(commands.Cog):
                 if role:
                     await message.author.add_roles(role, reason="Anti-scam: high-risk content")
             else:
-                minutes = self.cfg.get("auto_timeout_minutes", 15)
+                minutes = guild_cfg.get("auto_timeout_minutes", 15)
                 await message.author.timeout(timedelta(minutes=minutes), reason="Anti-scam: high-risk content")
         except discord.Forbidden:
             log.warning("Not enough permissions to sanction %s", message.author.id)
@@ -193,8 +195,8 @@ class ScamDetector(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
-
-        if isinstance(message.author, discord.Member) and self._is_exempt(message.author):
+        guild_cfg = await self.db.get_guild_config(message.guild.id)
+        if isinstance(message.author, discord.Member) and self._is_exempt(message.author, guild_cfg):
             return  # trusted role: skip detection entirely
 
         text_score, text_reasons = score_text(message.content)
@@ -204,10 +206,10 @@ class ScamDetector(commands.Cog):
             a.url for a in message.attachments
             if a.content_type and a.content_type.startswith("image/")
         ]
-        max_bytes = int(self.cfg.get("max_image_size_mb", 8) * 1024 * 1024)
+        max_bytes = int(guild_cfg.get("max_image_size_mb", 8) * 1024 * 1024)
         hash_score, hash_reasons, matched_image_urls, unmatched_images = await score_attachment_urls(
             image_urls,
-            hamming_threshold=self.cfg.get("hamming_threshold", 8),
+            hamming_threshold=guild_cfg.get("hamming_threshold", 8),
             max_bytes=max_bytes,
         )
 
@@ -222,24 +224,24 @@ class ScamDetector(commands.Cog):
                     ocr_reasons.append(r.replace("text: ", "image (OCR): ", 1))
 
         has_link = bool(extract_urls(message.content))
-        burst_score = await self._register_burst(message.guild.id, message.author.id, has_link)
+        burst_score = await self._register_burst(message.guild.id, message.author.id, has_link, guild_cfg)
 
         behavior_reasons = []
         if burst_score:
             behavior_reasons.append("behavior: several link messages in a short time")
 
         behavior_score = burst_score
-        if isinstance(message.author, discord.Member) and self._is_new_account(message.author):
+        if isinstance(message.author, discord.Member) and self._is_new_account(message.author, guild_cfg):
             behavior_score += 2
             behavior_reasons.append("behavior: recently created account")
 
         total_score = text_score + link_score + hash_score + ocr_score + behavior_score
         all_reasons = text_reasons + link_reasons + hash_reasons + ocr_reasons + behavior_reasons
 
-        alert_threshold = self.cfg.get("alert_threshold", 3)
+        alert_threshold = guild_cfg.get("alert_threshold", 3)
         if total_score >= alert_threshold:
             evidence_url = matched_image_urls[0] if matched_image_urls else None
-            await self._act_on_message(message, total_score, all_reasons, evidence_url)
+            await self._act_on_message(message, total_score, all_reasons, evidence_url, guild_cfg)
 
     # ---------- moderator commands ----------
 
@@ -279,7 +281,8 @@ class ScamDetector(commands.Cog):
         account ever adds something it shouldn't, there's a record of who did
         it and when, instead of a silent, unattributed change to the database.
         """
-        channel = await self._get_mod_log_channel(ctx.guild)
+        guild_cfg = await self.db.get_guild_config(ctx.guild.id)
+        channel = await self._get_mod_log_channel(ctx.guild, guild_cfg)
         if channel is None:
             return
 
@@ -293,21 +296,115 @@ class ScamDetector(commands.Cog):
         embed.set_footer(text="Anti-scam audit log")
         await channel.send(embed=embed)
 
-    @commands.command(name="scamconfig")
-    @commands.has_permissions(manage_guild=True)
-    async def show_config(self, ctx: commands.Context):
-        """Show the active thresholds (to verify the config loaded correctly)."""
-        cfg = self.cfg
-        lines = [
-            f"action_threshold: {cfg.get('action_threshold')}",
-            f"alert_threshold: {cfg.get('alert_threshold')}",
-            f"hamming_threshold: {cfg.get('hamming_threshold')}",
-            f"mod_log_channel_id: {cfg.get('mod_log_channel_id')}",
-            f"exempt_role_ids: {cfg.get('exempt_role_ids')}",
-            f"max_image_size_mb: {cfg.get('max_image_size_mb')}",
-        ]
-        await ctx.reply("```\n" + "\n".join(lines) + "\n```")
+    config_group = discord.app_commands.Group(
+        name="config", 
+        description="Configure anti-scam settings for this server",
+        default_permissions=discord.Permissions(manage_guild=True)
+    )
 
+    @config_group.command(name="view", description="Show the active config for this server.")
+    async def config_view(self, interaction: discord.Interaction):
+        guild_cfg = await self.db.get_guild_config(interaction.guild_id)
+        lines = [
+            f"action_threshold: {guild_cfg.get('action_threshold')}",
+            f"alert_threshold: {guild_cfg.get('alert_threshold')}",
+            f"hamming_threshold: {guild_cfg.get('hamming_threshold')}",
+            f"mod_log_channel_id: {guild_cfg.get('mod_log_channel_id')}",
+            f"exempt_role_ids: {guild_cfg.get('exempt_role_ids')}",
+            f"max_image_size_mb: {guild_cfg.get('max_image_size_mb')}",
+            f"new_account_days_threshold: {guild_cfg.get('new_account_days_threshold')}",
+            f"burst_message_count: {guild_cfg.get('burst_message_count')}",
+            f"burst_window_seconds: {guild_cfg.get('burst_window_seconds')}",
+            f"auto_timeout_minutes: {guild_cfg.get('auto_timeout_minutes')}",
+            f"quarantine_role_id: {guild_cfg.get('quarantine_role_id')}",
+        ]
+        await interaction.response.send_message("```\n" + "\n".join(lines) + "\n```", ephemeral=True)
+
+    @config_group.command(name="set", description="Set a configuration value.")
+    @discord.app_commands.describe(
+        action_threshold="Action threshold score",
+        alert_threshold="Alert threshold score",
+        hamming_threshold="Hamming distance threshold for image hashes",
+        mod_log_channel="Channel for moderator alerts",
+        max_image_size_mb="Max image size to process (MB)",
+        new_account_days="Days threshold to consider an account 'new'",
+        burst_message_count="Number of link messages in window to trigger burst",
+        burst_window="Window in seconds for burst detection",
+        auto_timeout="Minutes to timeout user automatically",
+        quarantine_role="Role to assign for quarantine"
+    )
+    async def config_set(
+        self, 
+        interaction: discord.Interaction,
+        action_threshold: Optional[int] = None,
+        alert_threshold: Optional[int] = None,
+        hamming_threshold: Optional[int] = None,
+        mod_log_channel: Optional[discord.TextChannel] = None,
+        max_image_size_mb: Optional[int] = None,
+        new_account_days: Optional[int] = None,
+        burst_message_count: Optional[int] = None,
+        burst_window: Optional[int] = None,
+        auto_timeout: Optional[int] = None,
+        quarantine_role: Optional[discord.Role] = None,
+    ):
+        updated = []
+        if action_threshold is not None:
+            await self.db.update_guild_config(interaction.guild_id, "action_threshold", action_threshold)
+            updated.append("action_threshold")
+        if alert_threshold is not None:
+            await self.db.update_guild_config(interaction.guild_id, "alert_threshold", alert_threshold)
+            updated.append("alert_threshold")
+        if hamming_threshold is not None:
+            await self.db.update_guild_config(interaction.guild_id, "hamming_threshold", hamming_threshold)
+            updated.append("hamming_threshold")
+        if mod_log_channel is not None:
+            await self.db.update_guild_config(interaction.guild_id, "mod_log_channel_id", mod_log_channel.id)
+            updated.append("mod_log_channel_id")
+        if max_image_size_mb is not None:
+            await self.db.update_guild_config(interaction.guild_id, "max_image_size_mb", max_image_size_mb)
+            updated.append("max_image_size_mb")
+        if new_account_days is not None:
+            await self.db.update_guild_config(interaction.guild_id, "new_account_days_threshold", new_account_days)
+            updated.append("new_account_days_threshold")
+        if burst_message_count is not None:
+            await self.db.update_guild_config(interaction.guild_id, "burst_message_count", burst_message_count)
+            updated.append("burst_message_count")
+        if burst_window is not None:
+            await self.db.update_guild_config(interaction.guild_id, "burst_window_seconds", burst_window)
+            updated.append("burst_window_seconds")
+        if auto_timeout is not None:
+            await self.db.update_guild_config(interaction.guild_id, "auto_timeout_minutes", auto_timeout)
+            updated.append("auto_timeout_minutes")
+        if quarantine_role is not None:
+            await self.db.update_guild_config(interaction.guild_id, "quarantine_role_id", quarantine_role.id)
+            updated.append("quarantine_role_id")
+            
+        if updated:
+            await interaction.response.send_message(f"Updated configuration for: {', '.join(updated)}", ephemeral=True)
+        else:
+            await interaction.response.send_message("No configuration changes provided.", ephemeral=True)
+
+    @config_group.command(name="add_exempt_role", description="Add an exempt role")
+    async def config_add_exempt(self, interaction: discord.Interaction, role: discord.Role):
+        cfg = await self.db.get_guild_config(interaction.guild_id)
+        roles = cfg.get("exempt_role_ids") or []
+        if role.id not in roles:
+            roles.append(role.id)
+            await self.db.update_guild_config(interaction.guild_id, "exempt_role_ids", roles)
+            await interaction.response.send_message(f"Added {role.mention} to exempt roles.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"{role.mention} is already exempt.", ephemeral=True)
+            
+    @config_group.command(name="remove_exempt_role", description="Remove an exempt role")
+    async def config_remove_exempt(self, interaction: discord.Interaction, role: discord.Role):
+        cfg = await self.db.get_guild_config(interaction.guild_id)
+        roles = cfg.get("exempt_role_ids") or []
+        if role.id in roles:
+            roles.remove(role.id)
+            await self.db.update_guild_config(interaction.guild_id, "exempt_role_ids", roles)
+            await interaction.response.send_message(f"Removed {role.mention} from exempt roles.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"{role.mention} is not exempt.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ScamDetector(bot))

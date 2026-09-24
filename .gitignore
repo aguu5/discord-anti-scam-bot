@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 antigravity.json
 prompts/
+AGENTS.md
+MODEL_DOCUMENT.md

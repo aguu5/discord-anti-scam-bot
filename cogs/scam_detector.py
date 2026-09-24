@@ -18,10 +18,13 @@ log = logging.getLogger("anti_scam_bot.scam_detector")
 
 
 class UndoActionView(discord.ui.View):
-    def __init__(self, target_id: int, quarantine_role_id: Optional[int]):
+    def __init__(self, target_id: int, quarantine_role_id: Optional[int], channel_id: int, content: str, author_mention: str):
         super().__init__(timeout=None)
         self.target_id = target_id
         self.quarantine_role_id = quarantine_role_id
+        self.channel_id = channel_id
+        self.content = content
+        self.author_mention = author_mention
 
     @discord.ui.button(label="Undo Action", style=discord.ButtonStyle.green)
     async def undo_action(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -42,6 +45,11 @@ class UndoActionView(discord.ui.View):
             else:
                 if member.is_timed_out():
                     await member.timeout(None, reason=f"Action undone by {interaction.user}")
+            
+            channel = interaction.guild.get_channel(self.channel_id)
+            if channel:
+                restored_text = f"**Restored message from {self.author_mention}** (restored by {interaction.user.mention}):\n{self.content}"
+                await channel.send(restored_text)
             
             button.disabled = True
             button.label = f"Undone by {interaction.user.display_name}"
@@ -157,7 +165,13 @@ class ScamDetector(commands.Cog):
             return  # stays as an alert only, for manual review
 
         quarantine_role_id = guild_cfg.get("quarantine_role_id")
-        view = UndoActionView(message.author.id, quarantine_role_id)
+        view = UndoActionView(
+            message.author.id,
+            quarantine_role_id,
+            message.channel.id,
+            message.content or "*(no text)*",
+            message.author.mention
+        )
         await self._send_alert(message, score, reasons, evidence_image_url, guild_cfg, view)
         await self.db.increment_stat(message.guild.id, "alerts_raised")
         await self.db.increment_stat(message.guild.id, "actions_taken")

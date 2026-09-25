@@ -82,3 +82,26 @@ async def test_independent_guild_dm_messages():
     assert config2["dm_message"] == "Message for Guild 2"
     
     await db.close()
+
+@pytest.mark.asyncio
+async def test_unset_dm_message_fallback(cog):
+    from utils.db import ScamDb
+    db = ScamDb(":memory:")
+    await db.connect()
+    
+    guild_id = 9999
+    guild_cfg = await db.get_guild_config(guild_id)
+    assert guild_cfg["dm_message"] is None
+    
+    mock_message = MagicMock()
+    mock_message.author.send = AsyncMock()
+    mock_message.delete = AsyncMock()
+    mock_message.author.timeout = AsyncMock()
+    
+    cog._send_alert = AsyncMock()
+    
+    await cog._act_on_message(mock_message, 10, ["test"], None, guild_cfg)
+    
+    assert mock_message.author.send.call_args[0][0] == "Your account was flagged for suspicious activity and has been temporarily restricted. Please check your authorized apps, change your password, and enable 2FA."
+    
+    await db.close()

@@ -59,6 +59,18 @@ class ScamDb:
             )
             """
         )
+        
+        # 10.10 migration: Add missing columns if they don't exist
+        for col, col_def in [
+            ("dm_on_action", "INTEGER DEFAULT 1"),
+            ("dm_message", "TEXT"),
+            ("suspicious_domain_age_days", "INTEGER DEFAULT 30")
+        ]:
+            try:
+                await self._conn.execute(f"ALTER TABLE guild_settings ADD COLUMN {col} {col_def}")
+            except aiosqlite.OperationalError:
+                pass # Column already exists
+                
         await self._conn.commit()
 
     async def close(self):
@@ -67,7 +79,7 @@ class ScamDb:
 
     async def get_guild_config(self, guild_id: int) -> dict:
         async with self._conn.execute(
-            "SELECT action_threshold, alert_threshold, hamming_threshold, mod_log_channel_id, exempt_role_ids, max_image_size_mb, new_account_days_threshold, burst_message_count, burst_window_seconds, auto_timeout_minutes, quarantine_role_id FROM guild_settings WHERE guild_id = ?",
+            "SELECT action_threshold, alert_threshold, hamming_threshold, mod_log_channel_id, exempt_role_ids, max_image_size_mb, new_account_days_threshold, burst_message_count, burst_window_seconds, auto_timeout_minutes, quarantine_role_id, dm_on_action, dm_message, suspicious_domain_age_days FROM guild_settings WHERE guild_id = ?",
             (guild_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -84,6 +96,9 @@ class ScamDb:
                     "burst_window_seconds": row[8],
                     "auto_timeout_minutes": row[9],
                     "quarantine_role_id": row[10],
+                    "dm_on_action": bool(row[11]) if row[11] is not None else True,
+                    "dm_message": row[12],
+                    "suspicious_domain_age_days": row[13] if row[13] is not None else 30,
                 }
             
             # Default fallback

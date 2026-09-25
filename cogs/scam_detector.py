@@ -182,12 +182,11 @@ class ScamDetector(commands.Cog):
             log.warning("Couldn't delete message %s", message.id)
 
         # Send DM before sanctioning
-        dm_on_action = self.cfg.get("dm_on_action", True)
+        dm_on_action = guild_cfg.get("dm_on_action", True)
         if dm_on_action:
-            dm_msg = self.cfg.get(
-                "dm_message", 
-                "Your account was flagged for suspicious activity and has been temporarily restricted. Please check your authorized apps, change your password, and enable 2FA."
-            )
+            dm_msg = guild_cfg.get(
+                "dm_message" 
+            ) or "Your account was flagged for suspicious activity and has been temporarily restricted. Please check your authorized apps, change your password, and enable 2FA."
             try:
                 await message.author.send(dm_msg)
             except discord.Forbidden:
@@ -219,7 +218,7 @@ class ScamDetector(commands.Cog):
         await self.db.increment_stat(message.guild.id, "messages_scored")
 
         text_score, text_reasons = score_text(message.content)
-        suspicious_domain_age_days = self.cfg.get("suspicious_domain_age_days", 30)
+        suspicious_domain_age_days = guild_cfg.get("suspicious_domain_age_days", 30)
         link_score, link_reasons = await score_links(
             message.content, 
             db=self.db, 
@@ -339,6 +338,9 @@ class ScamDetector(commands.Cog):
             f"burst_window_seconds: {guild_cfg.get('burst_window_seconds')}",
             f"auto_timeout_minutes: {guild_cfg.get('auto_timeout_minutes')}",
             f"quarantine_role_id: {guild_cfg.get('quarantine_role_id')}",
+            f"dm_on_action: {guild_cfg.get('dm_on_action')}",
+            f"dm_message: {guild_cfg.get('dm_message')}",
+            f"suspicious_domain_age_days: {guild_cfg.get('suspicious_domain_age_days')}",
         ]
         await interaction.response.send_message("```\n" + "\n".join(lines) + "\n```", ephemeral=True)
 
@@ -353,7 +355,10 @@ class ScamDetector(commands.Cog):
         burst_message_count="Number of link messages in window to trigger burst",
         burst_window="Window in seconds for burst detection",
         auto_timeout="Minutes to timeout user automatically",
-        quarantine_role="Role to assign for quarantine"
+        quarantine_role="Role to assign for quarantine",
+        dm_on_action="Whether to DM the user before taking action (1 for True, 0 for False)",
+        dm_message="The message to send to the user",
+        suspicious_domain_age_days="Days threshold for suspicious domain age"
     )
     async def config_set(
         self, 
@@ -368,6 +373,9 @@ class ScamDetector(commands.Cog):
         burst_window: Optional[int] = None,
         auto_timeout: Optional[int] = None,
         quarantine_role: Optional[discord.Role] = None,
+        dm_on_action: Optional[int] = None,
+        dm_message: Optional[str] = None,
+        suspicious_domain_age_days: Optional[int] = None,
     ):
         updated = []
         if action_threshold is not None:
@@ -400,6 +408,15 @@ class ScamDetector(commands.Cog):
         if quarantine_role is not None:
             await self.db.update_guild_config(interaction.guild_id, "quarantine_role_id", quarantine_role.id)
             updated.append("quarantine_role_id")
+        if dm_on_action is not None:
+            await self.db.update_guild_config(interaction.guild_id, "dm_on_action", dm_on_action)
+            updated.append("dm_on_action")
+        if dm_message is not None:
+            await self.db.update_guild_config(interaction.guild_id, "dm_message", dm_message)
+            updated.append("dm_message")
+        if suspicious_domain_age_days is not None:
+            await self.db.update_guild_config(interaction.guild_id, "suspicious_domain_age_days", suspicious_domain_age_days)
+            updated.append("suspicious_domain_age_days")
             
         if updated:
             await interaction.response.send_message(f"Updated configuration for: {', '.join(updated)}", ephemeral=True)
@@ -463,7 +480,7 @@ class ScamDetector(commands.Cog):
             scanned += 1
 
             text_score, text_reasons = score_text(msg.content)
-            suspicious_domain_age_days = self.cfg.get("suspicious_domain_age_days", 30)
+            suspicious_domain_age_days = guild_cfg.get("suspicious_domain_age_days", 30)
             link_score, link_reasons = await score_links(
                 msg.content, 
                 db=self.db, 

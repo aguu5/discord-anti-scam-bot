@@ -41,11 +41,10 @@ burst_window_seconds: 15
 # (ignored if quarantine_role_id is set).
 auto_timeout_minutes: 15
 
-# Whether to send a DM to the user before applying the sanction.
-dm_on_action: true
-
-# The message to send to the flagged user.
-dm_message: "Your account was flagged for suspicious activity and has been temporarily restricted. Please check your authorized apps, change your password, and enable 2FA."
+# Note: `dm_on_action`, `dm_message`, and `suspicious_domain_age_days` 
+# were migrated from the global config to the per-guild database settings 
+# in v1.0 (Section 10.10). They should now be managed using the 
+# /scamconfig set command per server, rather than here.
 
 
 # --- Abuse mitigations ---

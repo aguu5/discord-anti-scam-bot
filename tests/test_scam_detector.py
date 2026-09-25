@@ -61,3 +61,24 @@ def test_is_new_account(cog):
     
     mock_member.created_at = datetime.now(timezone.utc) - timedelta(days=10)
     assert cog._is_new_account(mock_member, guild_cfg) is False
+
+@pytest.mark.asyncio
+async def test_independent_guild_dm_messages():
+    from utils.db import ScamDb
+    db = ScamDb(":memory:")
+    await db.connect()
+    
+    # Init config for guild 1 (ensures row exists)
+    await db.get_guild_config(1)
+    await db.update_guild_config(1, "dm_message", "Message for Guild 1")
+    # Init config for guild 2 (ensures row exists)
+    await db.get_guild_config(2)
+    await db.update_guild_config(2, "dm_message", "Message for Guild 2")
+    
+    config1 = await db.get_guild_config(1)
+    config2 = await db.get_guild_config(2)
+    
+    assert config1["dm_message"] == "Message for Guild 1"
+    assert config2["dm_message"] == "Message for Guild 2"
+    
+    await db.close()

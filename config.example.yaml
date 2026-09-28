@@ -7,6 +7,12 @@ token: "YOUR_TOKEN_HERE"
 
 prefix: "!"
 
+# ID of a specific server for instant command syncing during development.
+# null means global sync; a server ID means instant sync to that server only.
+# Switching from guild-scoped back to global later leaves duplicate commands
+# in that server until the guild copies are cleared.
+sync_guild_id: null
+
 # Path to the SQLite database for runtime state.
 db_path: "data/bot_state.db"
 

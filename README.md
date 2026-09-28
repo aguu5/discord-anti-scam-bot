@@ -44,7 +44,7 @@ message and applies a timeout (or a quarantine role, if you prefer that).
 3. Under **Privileged Gateway Intents**, enable **Message Content Intent**
    (required for the bot to read message text).
 4. Copy the **token** (you'll need it for `config.yaml`).
-5. **OAuth2 → URL Generator** tab: check the `bot` scope, and under
+5. **OAuth2 → URL Generator** tab: check BOTH the `bot` and `applications.commands` scopes, and under
    permissions check:
    - View Channels
    - Send Messages
@@ -71,6 +71,7 @@ Edit `config.yaml`:
 - `token`: the token from step 2.
 - `mod_log_channel_id`: with "Developer Mode" enabled in Discord,
   right-click your mod channel → **Copy ID**.
+- `sync_guild_id`: set to a server ID for testing commands instantly, or `null` for global sync.
 - Adjust the thresholds if you want to be more or less strict.
 
 ### 5. Run the bot

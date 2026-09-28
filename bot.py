@@ -27,6 +27,32 @@ def load_config(path: str = "config.yaml") -> dict:
         )
 
 
+class AntiScamBot(commands.Bot):
+    def __init__(self, config, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.config = config
+
+    async def setup_hook(self):
+        await self.load_extension("cogs.scam_detector")
+        
+        sync_guild_id = self.config.get("sync_guild_id")
+        try:
+            if sync_guild_id:
+                guild = discord.Object(id=sync_guild_id)
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                log.info("Synced %d command(s) to guild %s: %s", len(synced), sync_guild_id, [c.name for c in synced])
+            else:
+                synced = await self.tree.sync()
+                log.info("Synced %d command(s) globally: %s", len(synced), [c.name for c in synced])
+        except discord.HTTPException:
+            log.exception("Failed to sync commands (HTTPException).")
+
+    async def on_ready(self):
+        log.info("Logged in as %s (ID: %s)", self.user, self.user.id)
+        log.info("Active in %d server(s)", len(self.guilds))
+
+
 async def main():
     config = load_config()
     if not config.get("token") or config["token"] == "YOUR_TOKEN_HERE":
@@ -35,16 +61,9 @@ async def main():
     intents = discord.Intents.default()
     intents.message_content = True  # Privileged intent: enable it in the Developer Portal
 
-    bot = commands.Bot(command_prefix=config.get("prefix", "!"), intents=intents)
-    bot.config = config  # accessible from cogs via self.bot.config
-
-    @bot.event
-    async def on_ready():
-        log.info("Logged in as %s (ID: %s)", bot.user, bot.user.id)
-        log.info("Active in %d server(s)", len(bot.guilds))
+    bot = AntiScamBot(config, command_prefix=config.get("prefix", "!"), intents=intents)
 
     async with bot:
-        await bot.load_extension("cogs.scam_detector")
         await bot.start(config["token"])
 
 

@@ -63,6 +63,12 @@ message and applies a timeout (or a quarantine role, if you prefer that).
 pip install -r requirements.txt
 ```
 
+**Tesseract OCR:**
+Tesseract must be installed separately for OCR to work. Without it, OCR is disabled and the bot logs a warning at startup.
+- **Windows:** Download the installer from [UB-Mannheim](https://github.com/UB-Mannheim/tesseract/wiki).
+- **Debian/Ubuntu:** `sudo apt-get install tesseract-ocr`
+- **macOS:** `brew install tesseract`
+
 ### 4. Configure
 ```bash
 cp config.example.yaml config.yaml

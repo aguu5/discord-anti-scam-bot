@@ -9,6 +9,8 @@ import discord
 import yaml
 from discord.ext import commands
 
+from utils.ocr import get_tesseract_version
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -33,6 +35,12 @@ class AntiScamBot(commands.Bot):
         self.config = config
 
     async def setup_hook(self):
+        tess_version = get_tesseract_version()
+        if tess_version:
+            log.info("Tesseract found, version: %s", tess_version)
+        else:
+            log.warning("Tesseract not found. OCR is disabled.")
+
         await self.load_extension("cogs.scam_detector")
         
         sync_guild_id = self.config.get("sync_guild_id")

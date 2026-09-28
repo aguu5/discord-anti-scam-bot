@@ -66,3 +66,27 @@ async def test_bot_sync_httpexception(mock_tree_prop, mock_config):
     
     mock_tree.sync.assert_called_once()
     bot.load_extension.assert_called_once_with("cogs.scam_detector")
+
+
+def test_get_ignored_per_guild_keys_present():
+    from bot import get_ignored_per_guild_keys
+    config = {
+        "token": "abc",
+        "action_threshold": 5,
+        "mod_log_channel_id": 123,
+        "global_setting": "yes"
+    }
+    ignored = get_ignored_per_guild_keys(config)
+    assert set(ignored) == {"action_threshold", "mod_log_channel_id"}
+
+def test_get_ignored_per_guild_keys_none_present():
+    from bot import get_ignored_per_guild_keys
+    config = {
+        "token": "abc",
+        "prefix": "!",
+        "db_path": "data/test.db",
+        "sync_guild_id": 123
+    }
+    ignored = get_ignored_per_guild_keys(config)
+    assert ignored == []
+

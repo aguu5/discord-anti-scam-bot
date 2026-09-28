@@ -53,10 +53,29 @@ class AntiScamBot(commands.Bot):
         log.info("Active in %d server(s)", len(self.guilds))
 
 
+def get_ignored_per_guild_keys(config: dict) -> list[str]:
+    per_guild_keys = {
+        "action_threshold", "alert_threshold", "hamming_threshold",
+        "mod_log_channel_id", "exempt_role_ids", "max_image_size_mb",
+        "new_account_days_threshold", "burst_message_count", "burst_window_seconds",
+        "auto_timeout_minutes", "quarantine_role_id", "dm_on_action",
+        "dm_message", "suspicious_domain_age_days"
+    }
+    return [k for k in config if k in per_guild_keys]
+
+
 async def main():
     config = load_config()
     if not config.get("token") or config["token"] == "YOUR_TOKEN_HERE":
         raise SystemExit("You need to set the bot token in config.yaml")
+
+    ignored_keys = get_ignored_per_guild_keys(config)
+    if ignored_keys:
+        log.warning(
+            "The following per-guild settings were found in config.yaml and will be IGNORED: %s. "
+            "These must be set per-server using the /scamconfig commands.",
+            ", ".join(ignored_keys)
+        )
 
     intents = discord.Intents.default()
     intents.message_content = True  # Privileged intent: enable it in the Developer Portal

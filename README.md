@@ -69,10 +69,15 @@ cp config.example.yaml config.yaml
 ```
 Edit `config.yaml`:
 - `token`: the token from step 2.
-- `mod_log_channel_id`: with "Developer Mode" enabled in Discord,
-  right-click your mod channel → **Copy ID**.
 - `sync_guild_id`: set to a server ID for testing commands instantly, or `null` for global sync.
-- Adjust the thresholds if you want to be more or less strict.
+- `db_path`: path to the local SQLite database.
+
+**Note on Per-Guild Settings:**
+Settings like `mod_log_channel_id`, `quarantine_role_id`, `action_threshold`, `alert_threshold`, `exempt_role_ids`, and other tuning parameters are **not** configured in `config.yaml`. 
+They are configured per-server using the bot's `/scamconfig` commands:
+- `/scamconfig view`: See the current active config for the server.
+- `/scamconfig set`: Set most parameters (thresholds, mod log channel, etc).
+- `/scamconfig add_exempt_role` / `remove_exempt_role`: Manage roles exempt from detection.
 
 ### 5. Run the bot
 ```bash

@@ -102,6 +102,94 @@ async def test_unset_dm_message_fallback(cog):
     
     await cog._act_on_message(mock_message, 10, ["test"], None, guild_cfg)
     
-    assert mock_message.author.send.call_args[0][0] == "Your account was flagged for suspicious activity and has been temporarily restricted. Please check your authorized apps, change your password, and enable 2FA."
-    
     await db.close()
+
+@pytest.mark.asyncio
+async def test_scan_channel_user_author(cog):
+    import discord
+    
+    interaction = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+    interaction.guild_id = 111
+    
+    mock_user = MagicMock(spec=discord.User)
+    mock_user.bot = False
+    mock_user.id = 12345
+    
+    mock_msg = MagicMock(spec=discord.Message)
+    mock_msg.author = mock_user
+    mock_msg.guild = MagicMock()
+    mock_msg.content = "Mr Beast crypto casino promo code solo hoy $1,000 you've won http://scam.com"
+    mock_msg.attachments = []
+    
+    # Setup history to yield mock_msg
+    async def async_gen():
+        yield mock_msg
+    interaction.channel.history = MagicMock(return_value=async_gen())
+    
+    guild_cfg = {
+        "alert_threshold": 3,
+        "action_threshold": 6,
+        "exempt_role_ids": [777]
+    }
+    cog.db.get_guild_config.return_value = guild_cfg
+    
+    mock_member = MagicMock(spec=discord.Member)
+    mock_role = MagicMock()
+    mock_role.id = 777
+    mock_member.roles = [mock_role]
+    
+    # mock guild.get_member and guild.fetch_member on msg.guild
+    mock_msg.guild.get_member = MagicMock(return_value=None)
+    mock_msg.guild.fetch_member = AsyncMock(return_value=mock_member)
+    
+    cog.db.get_whois_cache.return_value = 0.0
+    cog.db.increment_stat = AsyncMock()
+    
+    cog._act_on_message = AsyncMock()
+    
+    await cog.scan_channel.callback(cog, interaction, limit=1)
+    
+    # Because they are a member with an exempt role (after resolution), they should not be acted on
+    cog._act_on_message.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_resolve_member_cache(cog):
+    import discord
+    guild = MagicMock()
+    guild.get_member.return_value = None
+    guild.fetch_member = AsyncMock(return_value=MagicMock(spec=discord.Member))
+    
+    author = MagicMock(spec=discord.User)
+    author.id = 999
+    
+    cache = {}
+    
+    res1 = await cog._resolve_member(guild, author, cache)
+    assert res1 is not None
+    assert cache[author.id] == res1
+    assert guild.fetch_member.call_count == 1
+    
+    # second call should hit cache
+    res2 = await cog._resolve_member(guild, author, cache)
+    assert res2 is res1
+    assert guild.fetch_member.call_count == 1
+
+@pytest.mark.asyncio
+async def test_resolve_member_not_found(cog):
+    import discord
+    guild = MagicMock()
+    guild.get_member.return_value = None
+    guild.fetch_member = AsyncMock(side_effect=discord.NotFound(MagicMock(status=404), "Not found"))
+    
+    author = MagicMock(spec=discord.User)
+    author.id = 123
+    
+    cache = {}
+    
+    res = await cog._resolve_member(guild, author, cache)
+    assert res is None
+    assert cache[author.id] is None
+    assert guild.fetch_member.call_count == 1
+

@@ -97,6 +97,31 @@ class ScamDetector(commands.Cog):
         member_role_ids = {role.id for role in member.roles}
         return bool(exempt_ids & member_role_ids)
 
+    async def _resolve_member(self, guild: discord.Guild, author: discord.User | discord.Member, cache: dict) -> Optional[discord.Member]:
+        if author.id in cache:
+            return cache[author.id]
+
+        if isinstance(author, discord.Member):
+            cache[author.id] = author
+            return author
+
+        member = guild.get_member(author.id)
+        if member:
+            cache[author.id] = member
+            return member
+
+        try:
+            member = await guild.fetch_member(author.id)
+            cache[author.id] = member
+            return member
+        except discord.NotFound:
+            cache[author.id] = None
+            return None
+        except discord.HTTPException as e:
+            log.warning("HTTPException while fetching member %s: %s", author.id, e)
+            cache[author.id] = None
+            return None
+
     async def _register_burst(self, guild_id: int, user_id: int, has_link: bool, guild_cfg: dict) -> int:
         """Return extra points if the user is sending links in a burst."""
         if not has_link:
@@ -469,11 +494,14 @@ class ScamDetector(commands.Cog):
         guild_cfg = await self.db.get_guild_config(interaction.guild_id)
         scanned = 0
         flagged = 0
+        member_cache = {}
 
         async for msg in interaction.channel.history(limit=limit):
             if msg.author.bot or not msg.guild:
                 continue
-            if isinstance(msg.author, discord.Member) and self._is_exempt(msg.author, guild_cfg):
+                
+            member = await self._resolve_member(msg.guild, msg.author, member_cache)
+            if member and self._is_exempt(member, guild_cfg):
                 continue
                 
             await self.db.increment_stat(interaction.guild_id, "messages_scored")
